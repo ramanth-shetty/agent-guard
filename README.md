@@ -32,7 +32,7 @@ AgentGuard is the layer in between: safe actions go through, risky ones need a h
 - **Privacy Shield.** Finds API keys, tokens, private keys, passwords, emails, phone numbers, credit cards (Luhn check), Aadhaar numbers (Verhoeff check) and PAN, and redacts them before anything is logged or shown.
 - **Optional Gemini analysis.** For ambiguous or obfuscated actions, a Gemini check can add risk. It can only raise a verdict, never lower one, and it only sees redacted data.
 - **Human approval queue.** `ASK_HUMAN` requests wait for a person to approve or deny, with a live countdown. If nobody answers in time, the action is blocked.
-- **Action-bound approvals.** An approved action gets an HMAC-signed token tied to the SHA-256 hash of that exact action, so an agent cannot get approval for one command and run another.
+- **Action-bound tokens.** Approved and allowed actions get an HMAC-signed token tied to the SHA-256 hash of that exact action. The benchmark shows that a token issued for one action is rejected for a different one.
 - **Hash-chained audit ledger.** Each record is linked to the previous one with SHA-256. One call verifies the whole chain.
 - **Editable policy.** Allowlists, protected paths, privacy rules and thresholds live in a YAML/JSON policy you can edit live in the dashboard.
 - **Live dashboard.** React app with real-time events over Server-Sent Events and WebSocket.
@@ -156,7 +156,7 @@ except ActionBlocked as e:
     print("Blocked:", e)
 ```
 
-For `ASK_HUMAN` actions the SDK waits for a decision from the Approval Queue, then checks that the action matches the approved token before running it.
+For `ASK_HUMAN` actions the SDK waits for a decision from the Approval Queue and runs the action only if it is approved. Denied, expired and blocked actions raise `ActionBlocked` and never run.
 
 > Run demos inside a throwaway folder or container, so a mistake can never touch real files.
 
@@ -247,6 +247,7 @@ Node.js · Express · TypeScript · React · Tailwind CSS · Vite · WebSocket a
 ## Limitations and roadmap
 
 - **Enforcement depends on integration.** AgentGuard protects agents whose tools go through the SDK or call `/v1/evaluate`. An agent that can run commands directly is not covered. OS-level sandboxing is future work.
+- **Token binding is not yet checked at run time.** The server issues and can verify action-bound tokens (the benchmark proves it), but the SDK does not yet re-verify the token before running a tool.
 - **Data is held in memory.** The audit ledger and approvals reset when the server restarts. A database is planned.
 - **No API authentication yet.** Keys sent by the SDK are not checked by the server. Do not expose the server to the internet as it is.
 - **Rules cover known patterns.** Anything unknown goes to a human rather than being assumed safe.
