@@ -1,316 +1,263 @@
-# AgentGuard — Autonomous AI Agent Permission & Policy Guardrails API
+# AgentGuard
 
-> **DevHack 2026 Problem Statement PS 2.1 — Final Project Delivery**  
-> **Production-Grade Policy Enforcement, Interception Engine, and Human-in-the-Loop Oversight for Autonomous AI Agents**
+**A permission-and-policy API that decides what an AI agent is allowed to do on your computer.**
 
----
+Before an agent runs a shell command, touches a file, calls a URL, queries a database or installs a package, it asks AgentGuard first. AgentGuard checks the request and answers with one of three verdicts:
 
-## 1. Executive Summary
+| Verdict     | Meaning                                                             |
+| ----------- | ------------------------------------------------------------------- |
+| `ALLOW`     | Safe and in scope. The action runs automatically.                   |
+| `ASK_HUMAN` | Needs a person's permission. The action waits in an approval queue. |
+| `BLOCK`     | Never allowed. The action is denied with a reason.                  |
 
-Autonomous AI agents equipped with tool-calling capabilities (Bash execution, file read/write, HTTP networking, database queries, package managers) introduce critical operational and security risks:
-- Unintended destructive actions (e.g., `rm -rf /`, `DROP TABLE`, rogue `git push`)
-- Sensitive credential leaks and data exfiltration (e.g., `.env` harvesting, credit card exposure, token forwarding)
-- Boundary escapes (e.g., writing outside sandbox boundaries, reading `/etc/shadow`)
-- Unbounded operational autonomy without human sign-off for critical production tasks
+Every decision is recorded in a tamper-evident audit ledger and shown live on a dashboard.
 
-**AgentGuard** is an ultra-low-latency, fail-closed interception proxy and policy harness that validates, sanitizes, and evaluates every tool call proposed by an agent before execution. It returns one of three decisive verdicts:
-- **`ALLOW`**: The action is benign, within policy bounds, and safe to proceed automatically.
-- **`ASK_HUMAN`**: The action carries elevated risk or touches protected resources; execution pauses, a time-limited approval ticket is created with an HMAC-signed token, and an authorized human operator must approve it before a cryptographically bound execution token is issued.
-- **`BLOCK`**: The action violates security policy, attempts boundary evasion, or threatens system integrity; it is rejected immediately with an immutable audit entry.
+> Built by team **Narvacs** for **DevHack 2026** (Sahyadri, Mangaluru) · Theme: AI & Digital Trust / Responsible AI · Problem Statement **PS 2.1: AI Agent Safety and Control**
 
----
-
-## 2. Key Accomplishments & Architectural Components
-
-### 2.1. Dual-Path Evaluation Engine
-- **Fast Deterministic Path (<10ms p95 latency):** Zero-regex-catastrophe, high-speed AST and token matching against system boundary rules, forbidden shell commands, destructive database statements, and boundary-escape traversals.
-- **Deep Reasoning Path (Gemini Integration):** When ambiguous multi-step intent or complex contextual prompts arise, the engine can invoke Google Gemini to evaluate contextual safety, semantic intent, and risk propensity without stalling standard deterministic policies.
-
-### 2.2. Zero-Leak Privacy Shield
-- **Strict Regular & Algorithmic Expression Filtering:** Identifies and redacts sensitive credentials prior to storage or audit display:
-  - AWS Access Keys (`AKIA...`), GitHub Tokens (`ghp_...`, `gho_...`), JWT Tokens (`eyJ...`), Generic Bearer Tokens, Database URIs, Private Keys (`-----BEGIN ... KEY-----`), Passwords, and Email addresses.
-- **Luhn Algorithm Credit Card Validation:**
-  - Employs strict Luhn checksum validation on 13–19 digit sequences.
-  - Distinguishes actual credit cards from harmless 16-digit order numbers or shipment tracking IDs, eliminating false-positive blocks.
-- **Contextual Prose Disambiguation:**
-  - Prevents false-positive redaction on English phrases such as `"Please enter your password"` while cleanly trapping and redacting actual assignments like `password=SuperSecret123`.
-
-### 2.3. Fail-Closed Dynamic Policy Engine
-- **Declarative YAML & JSON Configuration:** Supports defining allowed, ask-human, and blocked tools, commands, and target path globs.
-- **Live Validation & Hot-Reloading:** The web console allows editing the active policy in real-time with syntax validation, schema linting, and instant reset to safe defaults.
-- **Strict Default-Deny:** Any unlisted tool or unrecognized action defaults to `ASK_HUMAN` or `BLOCK` rather than silently passing through.
-
-### 2.4. Human-in-the-Loop (HITL) Approval Queue
-- **Time-to-Live (TTL) Auto-Expiration:** Pending approval requests have a configurable countdown timer (default 120 seconds).
-- **Strict Fail-Closed Expiration:** If an operator does not respond before TTL expiry, the request automatically transitions to `expired` (verdict: `BLOCK`).
-- **HMAC-SHA256 Execution Token Binding:**
-  - When an action is approved, AgentGuard issues a single-use execution token cryptographically bound to `SHA-256(tool + action + command + target + payload)`.
-  - If a compromised agent attempts an **Action-Swap Attack** (substituting `rm -rf /` using a token issued for `ls`), the SDK and engine immediately detect the hash mismatch and abort.
-
-### 2.5. Cryptographic Hash-Chain Audit Ledger
-- **Tamper-Evident Ledger:** Every intercepted action, verdict, latency metric, and redaction is recorded in a cryptographically linked ledger.
-- **Genesis Block & SHA-256 Hashing:** Each record computes `current_hash = SHA-256(prev_hash + id + timestamp + action_hash + verdict)`.
-- **One-Click Real-Time Chain Verification:** The system verifies the mathematical integrity of the entire chain on demand via `/v1/audit/verify`.
-
-### 2.6. Canonical 15-Scenario Benchmark Suite & Custom Sandbox
-- **100% Pass Rate** across all 15 benchmark scenarios:
-  1. Safe Directory Listing (`ALLOW`)
-  2. Developer Testing Commands (`ALLOW`)
-  3. Package Installation (`ASK_HUMAN`)
-  4. Write Outside Workspace Boundary (`ASK_HUMAN`)
-  5. Destructive Root Deletion (`BLOCK`)
-  6. Remote Shell Piping (`BLOCK`)
-  7. Protected Credentials Access (`BLOCK`)
-  8. Data Exfiltration over HTTP (`BLOCK`)
-  9. Destructive Database DDL (`BLOCK`)
-  10. Obfuscated Command Evasion (`BLOCK`)
-  11. Sensitive Identity & Card Redaction (`BLOCK` + Luhn Masking)
-  12. Contextual Prose Disambiguation (`ALLOW`)
-  13. 16-Digit Non-Card Order ID (`ALLOW` via Luhn check)
-  14. Approval Timeout Expiration (`BLOCK` via fail-closed)
-  15. Action Hash Binding / Mismatch Refusal (`BLOCK` on swapped payload)
-- **Custom Interactive Sandbox:** Live UI playground allowing operators to test arbitrary agent commands, tools, payload text, and execution modes (`fast` vs `deep`).
-
-### 2.7. Reference Python SDK (`sdk/agentguard.py`)
-- Pythonic `@guard.tool(tool="shell", action="execute")` decorator.
-- Automatically calculates canonical action hashes, polls for human approval upon `ASK_HUMAN`, verifies cryptographically bound execution tokens, and raises `ActionBlocked` exceptions upon rejection.
-
-### 2.8. User Interface & Design System
-- **Deep Monochromatic (Premium Dark `#121212`):**
-  - Ultra-deep, warm charcoal background (`#121212`).
-  - Solid, flat panels (`#181818`) with crisp structural borders (`#282828`).
-  - Razor-sharp typography pairing `Syne` for display headers, `DM Sans` for body, and `JetBrains Mono` for cryptographic hashes, code, and latency metrics.
-  - Distinct amber (`#F59E0B`) pigments for primary interactive triggers and sage green (`#86EFAC`) for approvals.
-  - Zero-clipping layout with full viewport presence, real-time live event streaming, and dedicated attribution/telemetry footer.
+<!-- Add your demo video link here, e.g. [Watch the demo](https://...) -->
+<!-- Add 2-3 dashboard screenshots here, e.g. ![Live Monitor](docs/live-monitor.png) -->
 
 ---
 
-## 3. Project Architecture & File Tree
+## Why it exists
+
+Autonomous AI agents can read files, run commands and call business systems with little human oversight. A bug, a hallucination or a prompt-injection attack can make an agent delete data, change system settings or leak private information before anyone notices. Agents today either ask permission for everything, so people click "Allow" without reading, or for nothing at all.
+
+AgentGuard is the layer in between: safe actions go through, risky ones need a human, dangerous ones are stopped.
+
+## Features
+
+- **Three-verdict decision engine.** Rule-based risk scoring from 0 to 100, with hard-block rules that always win over the score.
+- **Command and path normalisation.** Resolves paths and shell commands to a canonical form and flags obfuscation before checking them.
+- **Privacy Shield.** Finds API keys, tokens, private keys, passwords, emails, phone numbers, credit cards (Luhn check), Aadhaar numbers (Verhoeff check) and PAN, and redacts them before anything is logged or shown.
+- **Optional Gemini analysis.** For ambiguous or obfuscated actions, a Gemini check can add risk. It can only raise a verdict, never lower one, and it only sees redacted data.
+- **Human approval queue.** `ASK_HUMAN` requests wait for a person to approve or deny, with a live countdown. If nobody answers in time, the action is blocked.
+- **Action-bound approvals.** An approved action gets an HMAC-signed token tied to the SHA-256 hash of that exact action, so an agent cannot get approval for one command and run another.
+- **Hash-chained audit ledger.** Each record is linked to the previous one with SHA-256. One call verifies the whole chain.
+- **Editable policy.** Allowlists, protected paths, privacy rules and thresholds live in a YAML/JSON policy you can edit live in the dashboard.
+- **Live dashboard.** React app with real-time events over Server-Sent Events and WebSocket.
+- **Python SDK.** A decorator that wraps an agent's tools so they run only after AgentGuard says yes.
+- **15-scenario benchmark.** One call runs the full test suite and reports pass rate, latency and leaks.
+
+## How it works
 
 ```
-├── .env.example                     # Environment configuration template
-├── index.html                       # Web entry point with typography & meta headers
-├── package.json                     # Node.js dependencies and run scripts
-├── server.ts                        # Express server + WebSocket + Vite middleware
-├── tsconfig.json                    # TypeScript compiler configuration
-├── vite.config.ts                   # Vite bundler configuration
-│
-├── sdk/
-│   └── agentguard.py                # Reference Python SDK with tool decorators & hash verification
-│
-└── src/
-    ├── App.tsx                      # Root component with tab navigation, footer & telemetry
-    ├── index.css                    # Tailwind CSS + Deep Monochromatic design tokens
-    ├── main.tsx                     # React client bootstrap entry point
-    │
-    ├── components/
-    │   ├── ActionDetailModal.tsx    # Modal inspector for full audit payload & redaction diff
-    │   ├── ApiDocsView.tsx          # Interactive API documentation, schemas & curl snippets
-    │   ├── ApprovalQueueView.tsx    # Real-time human review queue with live TTL countdown
-    │   ├── AuditLedgerView.tsx      # Cryptographic audit log with hash-chain integrity verifier
-    │   ├── LiveMonitorView.tsx      # Real-time intercepted tool feed, telemetry stats & search
-    │   ├── Navbar.tsx               # Header with brand mark, tab navigation & fast simulation button
-    │   ├── PolicyEditorView.tsx     # Live YAML policy editor with schema validation & reset
-    │   └── SimulatorView.tsx        # 15-scenario benchmark runner + interactive testing sandbox
-    │
-    ├── server/
-    │   ├── routes.ts                # Express REST API endpoints & SSE event broadcaster
-    │   ├── engine/
-    │   │   ├── crypto.ts            # SHA-256 hash calculator & HMAC execution token generator
-    │   │   ├── evaluator.ts         # Dual-path evaluation pipeline orchestrator
-    │   │   ├── normalizer.ts        # Path traversal & shell command canonicalization
-    │   │   ├── policyEngine.ts      # Policy loader, YAML validator, and rule evaluator
-    │   │   ├── privacyShield.ts     # PII, credential, API key & Luhn credit card redactor
-    │   │   ├── riskClassifier.ts    # Heuristic threat analyzer & risk score calculator
-    │   │   └── simulationSuite.ts   # 15 canonical benchmark scenarios & metric aggregator
-    │   └── store/
-    │       ├── approvalStore.ts     # In-memory approval ticket manager & SSE/WS event bus
-    │       └── auditStore.ts        # Cryptographic ledger store & hash-chain verifier
-    │
-    └── shared/
-        └── types.ts                 # Shared TypeScript interfaces, enums, and API contracts
+ AI agent (tools wrapped by the SDK)
+        │  POST /v1/evaluate
+        ▼
+ ┌─────────────────────────────────────┐
+ │ AgentGuard API                      │
+ │  1. Privacy Shield   scan + redact  │
+ │  2. Risk Classifier  rules (+ LLM)  │
+ │  3. Policy Engine    thresholds     │
+ └──────┬──────────────────┬───────────┘
+        │ every decision   │ ASK_HUMAN
+        ▼                  ▼
+  Audit ledger        Approval queue
+  (hash-chained)      (approve / deny / timeout = block)
+        └────────┬─────────┘
+                 ▼
+        Live dashboard (SSE + WebSocket)
 ```
 
----
+## Quick start
 
-## 4. REST API Reference
+**Requirements:** Node.js 20 or newer and npm.
 
-All API routes are served under `/v1/*` with `Content-Type: application/json`.
-
-### 4.1. `POST /v1/evaluate`
-Intercepts an agent action and returns an enforcement verdict.
-
-**Request Body:**
-```json
-{
-  "agent_id": "coder_agent_01",
-  "session_id": "sess_89f0a",
-  "tool": "shell",
-  "action": "execute",
-  "command": "pytest tests/ --verbose",
-  "target": "/sandbox/workspace",
-  "mode": "fast"
-}
-```
-
-**Response (`ALLOW`):**
-```json
-{
-  "verdict": "ALLOW",
-  "risk_score": 10,
-  "risk_categories": ["safe_read"],
-  "reasons": [
-    { "rule_id": "ALLOW_TEST_SUITE", "severity": "low", "message": "Standard automated test execution allowed." }
-  ],
-  "redacted": { "command": "pytest tests/ --verbose" },
-  "sensitive_entities": [],
-  "action_hash": "sha256:7f9a8b...",
-  "execution_token": "ag_tok_...",
-  "latency_ms": 3,
-  "engine": { "path": "fast", "llm": false }
-}
-```
-
-**Response (`ASK_HUMAN`):**
-```json
-{
-  "verdict": "ASK_HUMAN",
-  "risk_score": 60,
-  "risk_categories": ["system_modification"],
-  "reasons": [
-    { "rule_id": "EXTERNAL_FILE_WRITE", "severity": "medium", "message": "Attempt to write outside sandbox." }
-  ],
-  "approval_id": "appr_1713000000_abcd",
-  "expires_at": "2026-10-19T10:02:00.000Z",
-  "action_hash": "sha256:4d2e1f...",
-  "latency_ms": 5,
-  "engine": { "path": "fast", "llm": false }
-}
-```
-
-**Response (`BLOCK`):**
-```json
-{
-  "verdict": "BLOCK",
-  "risk_score": 100,
-  "risk_categories": ["destructive_shell", "system_integrity"],
-  "reasons": [
-    { "rule_id": "BLOCK_ROOT_DELETION", "severity": "critical", "message": "Destructive root deletion command detected." }
-  ],
-  "action_hash": "sha256:9c1a3b...",
-  "latency_ms": 2,
-  "engine": { "path": "fast", "llm": false }
-}
-```
-
----
-
-### 4.2. `GET /v1/approvals` & `POST /v1/approvals/:id/decision`
-Manage pending human approvals.
-
-- **`GET /v1/approvals?status=pending`**: Returns list of all pending approval requests.
-- **`POST /v1/approvals/:id/decision`**:
-  ```json
-  {
-    "decision": "approve",
-    "reason": "Verified maintenance script",
-    "decided_by": "security_engineer"
-  }
-  ```
-  Returns the approved record containing the HMAC-signed `execution_token`.
-
----
-
-### 4.3. `GET /v1/policies/active` & `PUT /v1/policies`
-Retrieve or modify the active security policy.
-
-**Example YAML Policy:**
-```yaml
-version: "3.0.0"
-mode: "fail_closed"
-timeout_seconds: 120
-rules:
-  - id: "BLOCK_RM_RF"
-    tool: "shell"
-    pattern: "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\\s+/"
-    verdict: "BLOCK"
-  - id: "ALLOW_SAFE_COMMANDS"
-    tool: "shell"
-    pattern: "^(ls|git|pytest|cat|echo)"
-    verdict: "ALLOW"
-```
-
----
-
-### 4.4. `GET /v1/audit` & `GET /v1/audit/verify`
-- **`GET /v1/audit`**: Query historical audit records by `verdict`, `agent_id`, or `session_id`.
-- **`GET /v1/audit/verify`**: Computes SHA-256 genesis-to-tip hash verification.
-  ```json
-  {
-    "valid": true,
-    "total_records": 150,
-    "genesis_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "tip_hash": "8f39a7b1...",
-    "broken_index": -1
-  }
-  ```
-
----
-
-### 4.5. `POST /v1/simulate`
-Executes the full 15-scenario canonical benchmark suite and returns summary statistics:
-- `pass_rate`: `100%`
-- `high_risk_intercept_rate`: `100%`
-- `p95_fast_path_latency_ms`: `< 10ms` (exceeds the 100ms threshold)
-- `unredacted_raw_secrets_leaked`: `0`
-
----
-
-### 4.6. `GET /v1/events` & `WS /v1/ws/events`
-- Real-time Server-Sent Events (SSE) and WebSocket feeds for instant updates to connected dashboards when actions are intercepted or approved.
-
----
-
-## 5. Security & Verification Guarantees
-
-| Security Property | Implementation Mechanism | Validation Status |
-| :--- | :--- | :--- |
-| **Fail-Closed Default** | Unrecognized commands or expired approvals default to `BLOCK` | Tested & Verified |
-| **Tamper-Evident Logs** | Continuous SHA-256 cryptographic hash-chain across all verdicts | Tested & Verified |
-| **Anti-Token Hijacking** | Execution tokens bound to `SHA-256(canonical action data)` | Tested & Verified |
-| **Zero-Leak Redaction** | Luhn algorithm + multi-class entity masking before persistence | Tested & Verified |
-| **Sub-100ms Overhead** | Fast-path deterministic evaluation averages <5ms (p95 < 10ms) | Tested & Verified |
-
----
-
-## 6. How to Run & Verify
-
-### Starting the Server
 ```bash
+git clone <your-repo-url>
+cd <your-repo-folder>
+npm install
 npm run dev
 ```
-The server runs unified Express REST endpoints, WebSocket streams, and the React frontend on `http://localhost:3000`.
 
-### Running Verification via CLI
+Open **http://localhost:3000**. The API and the dashboard are served by the same process.
+
+### Configuration
+
+All settings are optional environment variables, set in the terminal before starting:
+
+| Variable                 | Purpose                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`         | Enables the optional Gemini analysis. Without it, only the fast rules run.                      |
+| `AGENTGUARD_HMAC_SECRET` | Secret used to sign execution tokens. **Set your own value** for anything beyond local testing. |
+| `PORT`                   | Server port. Defaults to `3000`.                                                                |
+
+macOS / Linux:
+
 ```bash
-# 1. Check health
-curl -s http://localhost:3000/v1/health
-
-# 2. Run the 15-scenario benchmark suite
-curl -s -X POST http://localhost:3000/v1/simulate | jq .
-
-# 3. Verify cryptographic audit chain integrity
-curl -s http://localhost:3000/v1/audit/verify | jq .
-
-# 4. Read system telemetry metrics
-curl -s http://localhost:3000/v1/metrics | jq .
+GEMINI_API_KEY=your_key AGENTGUARD_HMAC_SECRET=a-long-random-string npm run dev
 ```
 
----
+Windows PowerShell:
 
-## 7. Submission Details
-- **Project Name:** AgentGuard
-- **Event:** DevHack 2026
-- **Problem Statement:** PS 2.1 — Autonomous AI Agent Permission and Policy API
-- **Design System:** Deep Monochromatic (Premium Dark `#121212`)
-- **License:** MIT License — © 2026 AgentGuard
+```powershell
+$env:GEMINI_API_KEY="your_key"; $env:AGENTGUARD_HMAC_SECRET="a-long-random-string"; npm run dev
+```
+
+## Try it
+
+### In the dashboard
+
+| Tab                 | What it does                                                                  |
+| ------------------- | ----------------------------------------------------------------------------- |
+| **Live Monitor**    | Real-time feed of intercepted actions, verdict counts, latency and redactions |
+| **Approval Queue**  | Pending `ASK_HUMAN` requests with a countdown; approve or deny                |
+| **Agent Simulator** | Run the 15-scenario benchmark or test your own command and payload            |
+| **Audit Ledger**    | Full history with a one-click hash-chain integrity check                      |
+| **Policy Editor**   | Edit, validate and reset the active policy                                    |
+| **API & SDK**       | Endpoint reference and copy-ready snippets                                    |
+
+### From the command line
+
+```bash
+# Safe action -> ALLOW
+curl -s -X POST http://localhost:3000/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"demo","session_id":"s1","tool":"shell","action":"execute","command":"ls -la /sandbox/workspace/src"}'
+
+# Package install -> ASK_HUMAN (appears in the Approval Queue)
+curl -s -X POST http://localhost:3000/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"demo","session_id":"s1","tool":"shell","action":"execute","command":"pip install requests==2.31.0"}'
+
+# Destructive command -> BLOCK
+curl -s -X POST http://localhost:3000/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"demo","session_id":"s1","tool":"shell","action":"execute","command":"rm -rf /"}'
+
+# Secrets sent to an unknown site -> BLOCK, with the secrets redacted in the response
+curl -s -X POST http://localhost:3000/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"demo","session_id":"s1","tool":"http","action":"send","target":"https://evil.example.com","payload":"key=AKIAIOSFODNN7EXAMPLE card 4111 1111 1111 1111"}'
+```
+
+On Windows PowerShell use `curl.exe` instead of `curl`.
+
+### With the Python SDK
+
+The SDK is a single file with no dependencies: [`sdk/agentguard.py`](sdk/agentguard.py).
+
+```python
+from agentguard import Guard, ActionBlocked
+
+guard = Guard(base_url="http://localhost:3000/v1", api_key="demo")
+
+@guard.tool(tool="shell", action="execute")
+def run_bash(command: str):
+    import subprocess
+    return subprocess.check_output(command, shell=True, text=True)
+
+run_bash("ls -la")              # ALLOW: runs immediately
+
+try:
+    run_bash("rm -rf /")        # BLOCK: never runs
+except ActionBlocked as e:
+    print("Blocked:", e)
+```
+
+For `ASK_HUMAN` actions the SDK waits for a decision from the Approval Queue, then checks that the action matches the approved token before running it.
+
+> Run demos inside a throwaway folder or container, so a mistake can never touch real files.
+
+## Benchmark
+
+`POST /v1/simulate` runs 15 scenarios and returns the results:
+
+```bash
+curl -s -X POST http://localhost:3000/v1/simulate
+```
+
+| Metric                        | Result      |
+| ----------------------------- | ----------- |
+| Scenarios passed              | 15 of 15    |
+| High-risk actions intercepted | 100%        |
+| p95 fast-path decision time   | under 10 ms |
+| Raw secrets leaked            | 0           |
+
+The scenarios cover safe reads, test commands, package installs, writes outside the workspace, root deletion, remote shell piping, credential access, data exfiltration, destructive SQL, obfuscated commands, card and ID redaction, plain-prose "password" text, non-card order numbers, approval timeout, and a swapped-action attack. Results are measured on this suite and the fast-rules path.
+
+## API reference
+
+All routes are under `/v1` and use JSON.
+
+| Method | Route                     | Purpose                                                                     |
+| ------ | ------------------------- | --------------------------------------------------------------------------- |
+| `POST` | `/evaluate`               | Check an agent action and get a verdict                                     |
+| `GET`  | `/approvals`              | List approvals (`?status=pending`)                                          |
+| `GET`  | `/approvals/:id`          | Get one approval                                                            |
+| `POST` | `/approvals/:id/decision` | Approve or deny: `{"decision":"approve","reason":"...","decided_by":"..."}` |
+| `GET`  | `/policies/active`        | Current policy                                                              |
+| `PUT`  | `/policies`               | Validate and activate a new policy                                          |
+| `POST` | `/policies/validate`      | Check a policy without activating it                                        |
+| `POST` | `/policies/reset`         | Restore the default policy                                                  |
+| `GET`  | `/audit`                  | Audit records, filter by `verdict`, `agent_id` or `session_id`              |
+| `GET`  | `/audit/verify`           | Verify the hash chain from the first record to the latest                   |
+| `GET`  | `/metrics`                | Counts, latency and redaction statistics                                    |
+| `GET`  | `/health`                 | Liveness and whether the Gemini check is available                          |
+| `POST` | `/simulate`               | Run the 15-scenario benchmark                                               |
+| `GET`  | `/events`                 | Live events (Server-Sent Events)                                            |
+| `WS`   | `/v1/ws/events`           | Live events (WebSocket)                                                     |
+| `GET`  | `/openapi.json`           | OpenAPI description                                                         |
+
+**Request to `/evaluate`**
+
+| Field                          | Values                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `tool`                         | `shell`, `filesystem`, `http`, `database`, `package`                   |
+| `action`                       | `execute`, `read`, `write`, `delete`, `send`, `install`, `query`       |
+| `command`, `target`, `payload` | Optional strings describing what the agent wants to do                 |
+| `agent_id`, `session_id`       | Identify the agent and its run                                         |
+| `mode`                         | `fast` (default) or `deep` (forces the Gemini check when a key is set) |
+
+**Response** includes `verdict`, `risk_score`, `risk_categories`, `reasons`, `redacted` (what is safe to show), `sensitive_entities` (type and score only, never the raw value), `action_hash`, `execution_token` (for `ALLOW`), `approval` (for `ASK_HUMAN`), `engine` and `latency_ms`.
+
+## Policy
+
+The default policy sets score thresholds (allow below 30, block from 70), an approval timeout of 120 seconds that ends in `BLOCK`, a workspace root, command and domain allowlists, hard-block command patterns, protected paths (such as `/etc/shadow`, `~/.ssh/*`, `**/.env`) and which kinds of sensitive data are masked or cause a block. Edit it live in the **Policy Editor** tab or through `PUT /v1/policies`.
+
+## Project structure
+
+```
+server.ts                  Express server, WebSocket and Vite integration
+sdk/agentguard.py          Python SDK
+src/
+  App.tsx, main.tsx        React app
+  components/              Dashboard views
+  shared/types.ts          Shared types and API contracts
+  server/
+    routes.ts              REST API
+    engine/
+      evaluator.ts         Runs the full pipeline
+      normalizer.ts        Path and command canonicalisation
+      privacyShield.ts     Detection and redaction
+      riskClassifier.ts    Rules, scoring and the optional Gemini check
+      policyEngine.ts      Policy loading and validation
+      crypto.ts            Action hash and execution tokens
+      simulationSuite.ts   The 15 benchmark scenarios
+    store/
+      approvalStore.ts     Approval tickets and live events
+      auditStore.ts        Hash-chained ledger
+```
+
+## Tech stack
+
+Node.js · Express · TypeScript · React · Tailwind CSS · Vite · WebSocket and Server-Sent Events · Google Gemini (optional) · Python SDK
+
+## Limitations and roadmap
+
+- **Enforcement depends on integration.** AgentGuard protects agents whose tools go through the SDK or call `/v1/evaluate`. An agent that can run commands directly is not covered. OS-level sandboxing is future work.
+- **Data is held in memory.** The audit ledger and approvals reset when the server restarts. A database is planned.
+- **No API authentication yet.** Keys sent by the SDK are not checked by the server. Do not expose the server to the internet as it is.
+- **Rules cover known patterns.** Anything unknown goes to a human rather than being assumed safe.
+
+## Team
+
+**Narvacs**
+
+| Name                       | Role                              |
+| -------------------------- | --------------------------------- |
+| Nireekshith Santhosh Nayak | Frontend & Dashboard Developer    |
+| Ramanth Shetty             | Product, Docs & Pitch Lead        |
+| Satwik S Rao               | Agent Integration & Demo Engineer |
+| Vinyas Jain                | Backend & Security Engine Lead    |
